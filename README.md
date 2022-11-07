@@ -1,2 +1,1 @@
-# cfat
-Computation of Feasible Applied Torques (CFAT)
+# Computation of Feasible Applied Torques (CFAT)
