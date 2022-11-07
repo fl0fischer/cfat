@@ -1,0 +1,17 @@
+[project]
+name = "cfat"
+description = "Computation of Feasible Applied Torques (CFAT) (Python package)"
+version = "0.1.0"
+authors = [
+    { name = "Florian Fischer", email = "florian.j.fischer@uni-bayreuth.de" },
+    { name = "Markus Klar", email = "markus.klar@uni-bayreuth.de" }
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "mujoco-py",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
