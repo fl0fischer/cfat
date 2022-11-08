@@ -11,7 +11,15 @@ For details, see the paper "Simulating Interaction Movements via Model Predictiv
   - [`iso_vr_pointing_gears.py`](https://github.com/fl0fischer/cfat/blob/main/examples/iso_vr_pointing/iso_vr_pointing_gears.py): compute model gears and control ranges from the identified CFAT data
 
 ### Installation:
-
+- To install with [mujoco-py](https://github.com/openai/mujoco-py), run
 ```bash
 pip install -e .
+```
+or 
+```bash
+pip install -e .["mujoco_py"]
+```
+- To install with [mujoco](https://github.com/deepmind/mujoco), run
+```bash
+pip install -e .["mujoco"]
 ```
