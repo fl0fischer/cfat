@@ -5,6 +5,7 @@ from scipy.signal import savgol_filter
 from scipy import stats
 import os, glob
 import logging
+import warnings
 from functools import reduce
 
 # integration of mujoco and mujoco_py is adapted from https://github.com/openai/gym/blob/master/gym/envs/mujoco/mujoco_env.py
@@ -26,8 +27,10 @@ else:
 from cfat.utils import muscle_activation_model_secondorder, muscle_activation_model_secondorder_inverse, \
     store_trajectories_table
 
+
 class DependencyNotInstalled(Exception):
     pass
+
 
 def _create_mujoco_sim(model_filename, use_mujoco_py=False):
     if use_mujoco_py:
@@ -70,9 +73,9 @@ def CFAT_algorithm(table_filename,
                    timestep=0.002,
                    allow_smaller_data_timesteps=True,
                    results_dir=None,
-                   use_mujoco_py=True,
                    store_results_to_csv=True,
-                   store_mj_inverse=True):
+                   store_mj_inverse=True,
+                   use_mujoco_py=True):
     output_table_filename = os.path.join(results_dir,
                                          os.path.split(os.path.splitext(table_filename)[0])[1].split('_PhaseSpace_')[
                                              -1] + '_CFAT.csv')
@@ -111,7 +114,11 @@ def CFAT_algorithm(table_filename,
     if submovement_times is not None:
         assert len(submovement_times) == 5  # 2
         trajectories_table[["Init_ID", "Target_ID", "Movement_ID"]] = submovement_times[2:].astype(int)
-        # submovement_times = trajectories_table.iloc[submovement_times].index  #if submovement_times incorporates indices instead of time values
+
+        ## If submovement_times incorporates indices instead of time values (which by assumption is the case iff it is of type int),
+        ## map indices to times:
+        if submovement_times.dtype == np.int64:
+            submovement_times = trajectories_table.iloc[submovement_times].index
     else:
         trajectories_table = trajectories_table.loc[trajectories_table.index >= trajectories_table.index[
             0] - trajectories_table.index.to_series().diff().mean(),
@@ -336,25 +343,32 @@ def CFAT_algorithm(table_filename,
     for column_name in [i.split('_pos')[0] for i in trajectories_table.columns if
                         i.endswith(
                             '_pos')]:  # & ~i.startswith('thorax') & ((not usemuscles) or ~i.startswith('thorax'))]:
-        qpos[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = trajectories_table.loc[:, column_name + '_pos'].iloc[
-            0]
+        qpos[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+            trajectories_table.loc[:, column_name + '_pos'].iloc[
+                0]
     for column_name in [i.split('_vel')[0] for i in trajectories_table.columns if
                         i.endswith(
                             '_vel')]:  # & ~i.startswith('thorax') & ((not usemuscles) or ~i.startswith('thorax'))]:
-        qvel[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = trajectories_table.loc[:, column_name + '_vel'].iloc[
-            0]
+        qvel[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+            trajectories_table.loc[:, column_name + '_vel'].iloc[
+                0]
     for column_name in [i.split('_acc')[0] for i in trajectories_table.columns if
                         i.endswith(
                             '_acc')]:  # & ~i.startswith('thorax') & ((not usemuscles) or ~i.startswith('thorax'))]:
-        qacc[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = trajectories_table.loc[:, column_name + '_acc'].iloc[
-            0]
+        qacc[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+            trajectories_table.loc[:, column_name + '_acc'].iloc[
+                0]
 
     # Set initial thorax translation:
     remaining_thorax_translation = trajectories_table.loc[:, "thorax_xpos_x":"thorax_xpos_z"].iloc[0] - \
-                                   model.body_pos[model.body_name2id("thorax") if use_mujoco_py else model.body("thorax").id]
-    qpos[model.joint_name2id("thorax_tx") if use_mujoco_py else model.joint("thorax_tx").id] = remaining_thorax_translation[0]
-    qpos[model.joint_name2id("thorax_ty") if use_mujoco_py else model.joint("thorax_ty").id] = remaining_thorax_translation[1]
-    qpos[model.joint_name2id("thorax_tz") if use_mujoco_py else model.joint("thorax_tz").id] = remaining_thorax_translation[2]
+                                   model.body_pos[
+                                       model.body_name2id("thorax") if use_mujoco_py else model.body("thorax").id]
+    qpos[model.joint_name2id("thorax_tx") if use_mujoco_py else model.joint("thorax_tx").id] = \
+        remaining_thorax_translation[0]
+    qpos[model.joint_name2id("thorax_ty") if use_mujoco_py else model.joint("thorax_ty").id] = \
+        remaining_thorax_translation[1]
+    qpos[model.joint_name2id("thorax_tz") if use_mujoco_py else model.joint("thorax_tz").id] = \
+        remaining_thorax_translation[2]
     qvel[model.joint_name2id("thorax_tx") if use_mujoco_py else model.joint("thorax_tx").id] = 0
     qvel[model.joint_name2id("thorax_ty") if use_mujoco_py else model.joint("thorax_ty").id] = 0
     qvel[model.joint_name2id("thorax_tz") if use_mujoco_py else model.joint("thorax_tz").id] = 0
@@ -362,7 +376,8 @@ def CFAT_algorithm(table_filename,
     # adjust thorax constraints to keep initial thorax posture:
     for column_name in ["thorax_tx", "thorax_ty", "thorax_tz", "thorax_rx", "thorax_ry", "thorax_rz"]:
         model.eq_data[
-            (model.eq_obj1id[:] == model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id) & (
+            (model.eq_obj1id[:] == model.joint_name2id(column_name) if use_mujoco_py else model.joint(
+                column_name).id) & (
                     model.eq_type[:] == 2), 0] = qpos[
             model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
     if ensure_constraints:
@@ -373,7 +388,7 @@ def CFAT_algorithm(table_filename,
                 model.eq_obj2id[
                     (model.eq_type == 2) & (model.eq_active == 1)],
                 model.eq_data[(model.eq_type == 2) &
-                                  (model.eq_active == 1), 4::-1]):
+                              (model.eq_active == 1), 4::-1]):
             qpos[virtual_joint_id] = np.polyval(poly_coefs, qpos[physical_joint_id])
 
     param_init_qpos = qpos
@@ -439,22 +454,27 @@ def CFAT_algorithm(table_filename,
             # input((row[[column_name + '_pos' for column_name in physical_joints]], nextrow[[column_name + '_pos' for column_name in physical_joints]]))
             for column_name in [i.split('_pos')[0] for i in trajectories_table.columns if
                                 i.endswith('_pos')]:  # & ~i.startswith('thorax')]:
-                last_qpos_data[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = row[column_name + '_pos']
+                last_qpos_data[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+                    row[column_name + '_pos']
             for column_name in [i.split('_vel')[0] for i in trajectories_table.columns if
                                 i.endswith('_vel')]:  # & ~i.startswith('thorax')]:
-                last_qvel_data[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = row[column_name + '_vel']
+                last_qvel_data[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+                    row[column_name + '_vel']
             for next_indices in range(nextrow.shape[0]):  # range(int(timestep / timestep_data)):
                 for column_name in [i.split('_pos')[0] for i in trajectories_table.columns if
                                     i.endswith('_pos')]:  # & ~i.startswith('thorax')]:
-                    next_qpos_data[next_indices][model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+                    next_qpos_data[next_indices][
+                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
                         nextrow[column_name + '_pos'].iloc[next_indices]
                 for column_name in [i.split('_vel')[0] for i in trajectories_table.columns if
                                     i.endswith('_vel')]:  # & ~i.startswith('thorax')]:
-                    next_qvel_data[next_indices][model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+                    next_qvel_data[next_indices][
+                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
                         nextrow[column_name + '_vel'].iloc[next_indices]
                 for column_name in [i.split('_acc')[0] for i in trajectories_table.columns if
                                     i.endswith('_acc')]:  # & ~i.startswith('thorax')]:
-                    next_qacc_data[next_indices][model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
+                    next_qacc_data[next_indices][
+                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
                         nextrow[column_name + '_acc'].iloc[next_indices]
             if ensure_constraints:
                 # adjust thorax constraints to keep initial thorax posture:
@@ -676,7 +696,8 @@ def CFAT_algorithm(table_filename,
             else:
                 for column_name in physical_joints:
                     output_table.loc[index, 'A_' + column_name] = ctrl[
-                        model.actuator_name2id('A_' + column_name) if use_mujoco_py else model.actuator('A_' + column_name).id]
+                        model.actuator_name2id('A_' + column_name) if use_mujoco_py else model.actuator(
+                            'A_' + column_name).id]
 
             if useexcitationcontrol and optimize_excitations:
                 for frame_skip_index in range(simulation_frame_skip):
@@ -706,16 +727,21 @@ def CFAT_algorithm(table_filename,
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = \
                                     data.qacc[
-                                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
+                                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(
+                                            column_name).id]
                             else:
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = (
                                                                                                                       data.qvel[
-                                                                                                                          (model.joint_name2id(
+                                                                                                                          (
+                                                                                                                              model.joint_name2id(
                                                                                                                                   column_name) if use_mujoco_py else model.joint(
                                                                                                                                   column_name).id)] -
-                                                                                                                      forward_qvel_testing[(model.joint_name2id(
-                            column_name) if use_mujoco_py else model.joint(column_name).id)]) / model.opt.timestep
+                                                                                                                      forward_qvel_testing[
+                                                                                                                          (
+                                                                                                                              model.joint_name2id(
+                                                                                                                                  column_name) if use_mujoco_py else model.joint(
+                                                                                                                                  column_name).id)]) / model.opt.timestep
 
             else:
                 for frame_skip_index in range(simulation_frame_skip):
@@ -741,14 +767,21 @@ def CFAT_algorithm(table_filename,
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = \
                                     data.qacc[
-                                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
+                                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(
+                                            column_name).id]
                             else:
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = (
-                                                                                                                      data.qvel[(model.joint_name2id(
-                            column_name) if use_mujoco_py else model.joint(column_name).id)] -
-                                                                                                                      forward_qvel_testing[(model.joint_name2id(
-                            column_name) if use_mujoco_py else model.joint(column_name).id)]) / model.opt.timestep
+                                                                                                                      data.qvel[
+                                                                                                                          (
+                                                                                                                              model.joint_name2id(
+                                                                                                                                  column_name) if use_mujoco_py else model.joint(
+                                                                                                                                  column_name).id)] -
+                                                                                                                      forward_qvel_testing[
+                                                                                                                          (
+                                                                                                                              model.joint_name2id(
+                                                                                                                                  column_name) if use_mujoco_py else model.joint(
+                                                                                                                                  column_name).id)]) / model.opt.timestep
 
             if store_mj_inverse:
                 if use_mujoco_py:
@@ -852,12 +885,69 @@ def CFAT_algorithm(table_filename,
     return output_table
 
 
+def CFAT_initacts_only(table_filename,
+                       model_filename,
+                       submovement_times,
+                       physical_joints=None,
+                       param_t_activation=0.04,
+                       param_t_excitation=0.03,
+                       num_target_switches=None,
+                       ensure_constraints=False,
+                       reset_pos_and_vel=True,
+                       usemuscles=False,
+                       useexcitationcontrol=True,
+                       optimize_excitations=False,
+                       usecontrollimits=True,
+                       use_qacc=False,
+                       timestep=0.002,
+                       allow_smaller_data_timesteps=True,
+                       results_dir=None,
+                       store_mj_inverse=True,
+                       use_mujoco_py=True):
+
+    # suppress performance warnings  #TODO: improve performance by creating output_table_SingleMovement via pd.concat() inside CFAT_algorithm()
+    warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
+
+    output_table = pd.DataFrame()
+    for submovement_time in submovement_times:
+        output_table_SingleMovement = CFAT_algorithm(table_filename,
+                                                     model_filename,
+                                                     physical_joints=physical_joints,
+                                                     param_t_activation=param_t_activation,
+                                                     param_t_excitation=param_t_excitation,
+                                                     submovement_times=submovement_time,
+                                                     num_target_switches=num_target_switches,
+                                                     ensure_constraints=ensure_constraints,
+                                                     reset_pos_and_vel=reset_pos_and_vel,
+                                                     usemuscles=usemuscles,
+                                                     useexcitationcontrol=useexcitationcontrol,
+                                                     optimize_excitations=optimize_excitations,
+                                                     usecontrollimits=usecontrollimits,
+                                                     only_initial_values=True,
+                                                     use_qacc=use_qacc,
+                                                     timestep=timestep,
+                                                     allow_smaller_data_timesteps=allow_smaller_data_timesteps,
+                                                     results_dir=results_dir,
+                                                     store_results_to_csv=False,
+                                                     store_mj_inverse=store_mj_inverse,
+                                                     use_mujoco_py=use_mujoco_py)
+        # Remove second half of dataframe (which was only required to compute first excitation value):
+        output_table_SingleMovement = output_table_SingleMovement.loc[
+                                      output_table_SingleMovement.time.shift(1, fill_value=0) <= submovement_time[
+                                          0] + 1 * timestep, :]
+
+        output_table = pd.concat((output_table, output_table_SingleMovement))
+    output_table_filename = os.path.join(results_dir, os.path.splitext(os.path.basename(table_filename))[0] + '_CFAT_initacts.csv')
+    store_trajectories_table(output_table_filename, output_table, unique_filename=False)
+
+
 def compute_gears_and_ctrlranges(DIRNAME_CFAT,
-              use_MAD_outliers=False,
-              use_3xSTD_outliers=True,
-              MAD_criterion_coefficient=20,
-              lower_quantile=0.0005  # only used if both use_MAD_outliers and use_3xSTD_outliers are False
-              ):
+                                 use_MAD_outliers=False,
+                                 use_3xSTD_outliers=True,
+                                 MAD_criterion_coefficient=20,
+                                 lower_quantile=0.0005
+                                 # only used if both use_MAD_outliers and use_3xSTD_outliers are False
+                                 ):
     """
     Compute gears and control ranges from CFAT data.
     :param DIRNAME_CFAT: directory with CFAT files (all *_CFAT.csv files in this directory are used)
@@ -896,7 +986,8 @@ def compute_gears_and_ctrlranges(DIRNAME_CFAT,
     participant_torque_dict = {}
 
     if use_MAD_outliers:
-        logging.info(f"Gears and control limits using outlier criterion based on {MAD_criterion_coefficient} times MAD:")
+        logging.info(
+            f"Gears and control limits using outlier criterion based on {MAD_criterion_coefficient} times MAD:")
         for column_name in computed_feasible_controls.columns:
             computed_feasible_controls__current_joint_without_outliers = \
                 computed_feasible_controls[column_name].loc[np.abs(

@@ -41,7 +41,7 @@ if __name__ == "__main__":
     check_study_dataset_IK_dir(DIRNAME_STUDY_IK)
 
     username = args.username
-    task_condition = args.task_condition  #"Standing_ID_ISO_15_plane"
+    task_condition = args.task_condition  #"Virtual_Cursor_ID_ISO_15_plane"
 
     if args.table_filename is not None:
         table_filename = args.table_filename

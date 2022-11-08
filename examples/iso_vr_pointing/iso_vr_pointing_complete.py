@@ -22,42 +22,43 @@ def check_study_dataset_IK_dir(DIRNAME_STUDY_IK):
             raise FileNotFoundError("Please ensure that 'DIRNAME_STUDY' points to a valid directory containing the ISO-VR-Pointing Dataset.")
 
 
-DIRNAME_STUDY_IK = "study_IK_raw/"
-check_study_dataset_IK_dir(DIRNAME_STUDY_IK)
+if __name__ == "__main__":
+    DIRNAME_STUDY_IK = "study_IK_raw/"
+    check_study_dataset_IK_dir(DIRNAME_STUDY_IK)
 
-print('\n\n                              +++ FEASIBLE CONTROL COMPUTATION +++')
-filelist = [(username, os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) for username in [f"U{i}" for i in range(1, 7)]
-            for f in os.listdir(DIRNAME_STUDY_IK) if
-            os.path.isfile(os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) and
-            f.startswith(username) and f.endswith('.mot')]
+    print('\n\n                              +++ FEASIBLE CONTROL COMPUTATION +++')
+    filelist = [(username, os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) for username in [f"U{i}" for i in range(1, 7)]
+                for f in os.listdir(DIRNAME_STUDY_IK) if
+                os.path.isfile(os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) and
+                f.startswith(username) and f.endswith('.mot')]
 
-CFC_timestep = 0.002
+    CFAT_timestep = 0.002
 
-physical_joints = ["elv_angle", "shoulder_elv", "shoulder_rot", "elbow_flexion", "pro_sup", "deviation", "flexion"]
-param_t_activation = 0.04
-param_t_excitation = 0.03
+    physical_joints = ["elv_angle", "shoulder_elv", "shoulder_rot", "elbow_flexion", "pro_sup", "deviation", "flexion"]
+    param_t_activation = 0.04
+    param_t_excitation = 0.03
 
-use_mujoco_py = True  #whether to use mujoco-py or mujoco
+    use_mujoco_py = True  #whether to use mujoco-py or mujoco
 
-for trial_id, (username, table_filename) in enumerate(filelist):
-    results_dir = f"_results/{username}_{CFC_timestep}s/"
-    if not os.path.exists(os.path.expanduser(results_dir)):
-        os.makedirs(os.path.expanduser(results_dir), exist_ok=True)
-    print(f'\nCOMPUTING FEASIBLE CONTROLS for {table_filename} with constant controls for {CFC_timestep} seconds...')
+    for trial_id, (username, table_filename) in enumerate(filelist):
+        results_dir = f"_results/{username}_{CFAT_timestep}s/"
+        if not os.path.exists(os.path.expanduser(results_dir)):
+            os.makedirs(os.path.expanduser(results_dir), exist_ok=True)
+        print(f'\nCOMPUTING FEASIBLE CONTROLS for {table_filename} with constant controls for {CFAT_timestep} seconds...')
 
-    model_filename = f"models/OriginExperiment_{username}.xml"
+        model_filename = f"models/OriginExperiment_{username}.xml"
 
-    CFAT_algorithm(table_filename,
-                   model_filename,
-                   physical_joints=physical_joints,
-                   param_t_activation=param_t_activation,
-                   param_t_excitation=param_t_excitation,
-                   num_target_switches=None,
-                   ensure_constraints=False,
-                   reset_pos_and_vel=False,
-                   useexcitationcontrol=True,
-                   optimize_excitations=False,
-                   use_qacc=True,
-                   timestep=CFC_timestep,
-                   results_dir=results_dir,
-                   use_mujoco_py=use_mujoco_py)
+        CFAT_algorithm(table_filename,
+                       model_filename,
+                       physical_joints=physical_joints,
+                       param_t_activation=param_t_activation,
+                       param_t_excitation=param_t_excitation,
+                       num_target_switches=None,
+                       ensure_constraints=False,
+                       reset_pos_and_vel=False,
+                       useexcitationcontrol=True,
+                       optimize_excitations=False,
+                       use_qacc=True,
+                       timestep=CFAT_timestep,
+                       results_dir=results_dir,
+                       use_mujoco_py=use_mujoco_py)
