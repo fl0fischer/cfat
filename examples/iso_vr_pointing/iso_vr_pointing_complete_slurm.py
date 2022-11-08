@@ -55,6 +55,6 @@ for trial_id, (username, table_filename) in enumerate(filelist):
         fh.writelines(f"#SBATCH -t 24:00:00 # (Requested wall time)\n")
         fh.writelines(f"#SBATCH --output={output_directory}/{trial_id}.out\n")
         fh.writelines(f"#SBATCH --error={error_directory}/{trial_id}.err\n")
-        fh.writelines(f"srun python iso_vr_pointing_example.py --username={username} --table_filename={table_filename} --use_mujoco={not use_mujoco_py}")
+        fh.writelines(f"srun python iso_vr_pointing_example.py --username={username} --table_filename={table_filename} {'--mujoco-py' if use_mujoco_py else '--mujoco'}")
 
     os.system(f"sbatch {job_file}")

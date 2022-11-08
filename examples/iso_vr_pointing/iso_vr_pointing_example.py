@@ -31,7 +31,10 @@ if __name__ == "__main__":
     parser.add_argument('--username', dest='username', default='U1', help='Username (U1-U6); used for model file (and table_filename, if not specified).')
     parser.add_argument('--task_condition', dest='task_condition', default='T_Pose', help='Task condition; used for table_filename.')
     parser.add_argument('--table_filename', dest='table_filename', help='Filename to run CFAT with.')
-    parser.add_argument('--use_mujoco', dest='use_mujoco_py', action='store_false', help='Whether to use MuJoCo Python bindings instead of mujoco-py.')
+    mujocopy_parser = parser.add_mutually_exclusive_group(required=False)
+    mujocopy_parser.add_argument('--mujoco-py', dest='use_mujoco_py', action='store_true', help='Whether to use mujoco-py or MuJoCo Python bindings.')
+    mujocopy_parser.add_argument('--mujoco', dest='use_mujoco_py', action='store_false')
+    parser.set_defaults(use_mujoco_py=True)
     args = parser.parse_args()
 
     DIRNAME_STUDY_IK = args.DIRNAME_STUDY_IK
