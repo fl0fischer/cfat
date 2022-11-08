@@ -807,7 +807,7 @@ def compute_gears_and_ctrlranges(DIRNAME_CFAT,
     upper_quantile = 1 - lower_quantile
 
     CFAT_table = pd.DataFrame()
-    CFAT_files = os.path.expanduser(os.path.join(DIRNAME_CFAT, f'*_CFC.csv'))
+    CFAT_files = os.path.expanduser(os.path.join(DIRNAME_CFAT, f'*_CFAT.csv'))
     for file in glob.iglob(CFAT_files, recursive=True):
         df = pd.read_csv(file, index_col="time")
         if "opt_success" not in df:

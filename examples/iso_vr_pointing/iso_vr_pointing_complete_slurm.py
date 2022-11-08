@@ -32,13 +32,13 @@ filelist = [(username, os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) for u
             os.path.isfile(os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) and
             f.startswith(username) and f.endswith('.mot')]
 
-job_directory = f"{os.getcwd()}/jobs"
+job_directory = f"{os.getcwd()}/_slurm/jobs"
 if not os.path.exists(job_directory):
     os.mkdir(job_directory)
-output_directory = f"{os.getcwd()}/out"
+output_directory = f"{os.getcwd()}/_slurm/out"
 if not os.path.exists(output_directory):
     os.mkdir(output_directory)
-error_directory = f"{os.getcwd()}/err"
+error_directory = f"{os.getcwd()}/_slurm/err"
 if not os.path.exists(error_directory):
     os.mkdir(error_directory)
 
