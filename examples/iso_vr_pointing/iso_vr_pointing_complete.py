@@ -11,8 +11,7 @@ def check_study_dataset_IK_dir(DIRNAME_STUDY_IK):
         if download_datasets.lower().startswith("y"):
             print(f"Will download and unzip to '{DIRNAME_STUDY_IK}'.")
             print("Downloading archive... ", end='', flush=True)
-            resp = open("/home/florian/mpc-mujoco-git/mpc_mujoco/data/ISO_VR_Pointing_IK_Raw.zip", 'rb')
-            #resp = urlopen("http://zenodo.org/ISO_VR_Pointing_IK_Raw.zip")
+            resp = urlopen("https://zenodo.org/record/7300062/files/ISO_VR_Pointing_IK_Raw.zip?download=1")
             zipfile = ZipFile(BytesIO(resp.read()))
             print("unzip archive... ", end='', flush=True)
             for file in zipfile.namelist():
