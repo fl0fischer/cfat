@@ -38,10 +38,12 @@ physical_joints = ["elv_angle", "shoulder_elv", "shoulder_rot", "elbow_flexion",
 param_t_activation = 0.04
 param_t_excitation = 0.03
 
+use_mujoco_py = True  #whether to use mujoco-py or mujoco
+
 for trial_id, (username, table_filename) in enumerate(filelist):
     results_dir = f"_results/{username}_{CFC_timestep}s/"
     if not os.path.exists(os.path.expanduser(results_dir)):
-        os.makedirs(os.path.expanduser(results_dir))
+        os.makedirs(os.path.expanduser(results_dir), exist_ok=True)
     print(f'\nCOMPUTING FEASIBLE CONTROLS for {table_filename} with constant controls for {CFC_timestep} seconds...')
 
     model_filename = f"models/OriginExperiment_{username}.xml"
@@ -58,4 +60,5 @@ for trial_id, (username, table_filename) in enumerate(filelist):
                    optimize_excitations=False,
                    use_qacc=True,
                    timestep=CFC_timestep,
-                   results_dir=results_dir)
+                   results_dir=results_dir,
+                   use_mujoco_py=use_mujoco_py)

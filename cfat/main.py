@@ -6,21 +6,50 @@ from scipy import stats
 import os, glob
 import logging
 from functools import reduce
-import mujoco_py
+
+# integration of mujoco and mujoco_py is adapted from https://github.com/openai/gym/blob/master/gym/envs/mujoco/mujoco_env.py
+try:
+    import mujoco_py
+except ImportError as e:
+    MUJOCO_PY_IMPORT_ERROR = e
+else:
+    MUJOCO_PY_IMPORT_ERROR = None
+
+try:
+    import mujoco
+except ImportError as e:
+    MUJOCO_IMPORT_ERROR = e
+else:
+    MUJOCO_IMPORT_ERROR = None
 
 # Local imports
 from cfat.utils import muscle_activation_model_secondorder, muscle_activation_model_secondorder_inverse, \
     store_trajectories_table
 
+class DependencyNotInstalled(Exception):
+    pass
 
 def _create_mujoco_sim(model_filename, use_mujoco_py=False):
     if use_mujoco_py:
+        if MUJOCO_PY_IMPORT_ERROR is not None:
+            raise DependencyNotInstalled(
+                f"{MUJOCO_PY_IMPORT_ERROR}. (HINT: you need to install mujoco_py, and also perform the setup instructions here: https://github.com/openai/mujoco-py/.)"
+            )
+
         model = mujoco_py.load_model_from_path(model_filename)
         sim = mujoco_py.MjSim(model)
+        data = sim.data
     else:
-        raise NotImplementedError
+        if MUJOCO_IMPORT_ERROR is not None:
+            raise DependencyNotInstalled(
+                f"{MUJOCO_IMPORT_ERROR}. (HINT: you need to install mujoco)"
+            )
 
-    return sim
+        sim = None
+        model = mujoco.MjModel.from_xml_path(model_filename)
+        data = mujoco.MjData(model)
+
+    return sim, model, data
 
 
 def CFAT_algorithm(table_filename,
@@ -54,30 +83,30 @@ def CFAT_algorithm(table_filename,
         trajectories_table = pd.read_csv(table_filename, skiprows=10, delimiter="\t", index_col="time")
 
     # Create MuJoCo environment
-    sim = _create_mujoco_sim(model_filename, use_mujoco_py=use_mujoco_py)
+    sim, model, data = _create_mujoco_sim(model_filename, use_mujoco_py=use_mujoco_py)
     if physical_joints is None:
-        physical_joint_ids = list(range(sim.model.njnt))
+        physical_joint_ids = list(range(model.njnt))
         virtual_joint_ids = []
         virtual_joints = []
         if use_mujoco_py:
-            physical_joints = [sim.model.joint_id2name(i) for i in range(sim.model.njnt)]
+            physical_joints = [model.joint_id2name(i) for i in range(model.njnt)]
         else:
-            physical_joints = [sim.model.joint(i).name for i in range(sim.model.njnt)]
+            physical_joints = [model.joint(i).name for i in range(model.njnt)]
     else:
         if use_mujoco_py:
-            physical_joint_ids = [sim.model.joint_name2id(name) for name in physical_joints]
-            virtual_joint_ids = [i for i in range(sim.model.njnt) if (i not in physical_joint_ids)]
-            virtual_joints = [sim.model.joint_id2name(i) for i in virtual_joint_ids]
+            physical_joint_ids = [model.joint_name2id(name) for name in physical_joints]
+            virtual_joint_ids = [i for i in range(model.njnt) if (i not in physical_joint_ids)]
+            virtual_joints = [model.joint_id2name(i) for i in virtual_joint_ids]
         else:
-            physical_joint_ids = [sim.model.joint(name).id for name in physical_joints]
-            virtual_joint_ids = [i for i in range(sim.model.njnt) if (i not in physical_joint_ids)]
-            virtual_joints = [sim.model.joint(i).name for i in virtual_joint_ids]
+            physical_joint_ids = [model.joint(name).id for name in physical_joints]
+            virtual_joint_ids = [i for i in range(model.njnt) if (i not in physical_joint_ids)]
+            virtual_joints = [model.joint(i).name for i in virtual_joint_ids]
 
     # Remove gears and control limits from used model
-    sim.model.actuator_gear[:] = np.array([[1, 0, 0, 0, 0, 0]] * sim.model.nu)
-    sim.model.actuator_ctrllimited[:] = False
-    sim.model.actuator_ctrlrange[:] = np.array([[-100, 100]] * sim.model.nu)
-    sim.model.actuator_biastype[:] = False
+    model.actuator_gear[:] = np.array([[1, 0, 0, 0, 0, 0]] * model.nu)
+    model.actuator_ctrllimited[:] = False
+    model.actuator_ctrlrange[:] = np.array([[-100, 100]] * model.nu)
+    model.actuator_biastype[:] = False
 
     if submovement_times is not None:
         assert len(submovement_times) == 5  # 2
@@ -89,16 +118,16 @@ def CFAT_algorithm(table_filename,
                              :].rename(lambda i: i + '_pos', axis=1) * np.pi / 180
     """
     INFO - USED SAMPLING INTERVALS:
-    - system dynamics/internal MuJoCo sample interval length: sim.model.opt.timestep
-    - (interpolated) data sampling interval length: timestep_data (= frame_skip_data * sim.model.opt.timestep)
-    - control sample interval length (length of interval with constant control): timestep (= simulation_frame_skip * sim.model.opt.timestep)
+    - system dynamics/internal MuJoCo sample interval length: model.opt.timestep
+    - (interpolated) data sampling interval length: timestep_data (= frame_skip_data * model.opt.timestep)
+    - control sample interval length (length of interval with constant control): timestep (= simulation_frame_skip * model.opt.timestep)
 
-    --> NECESSARY CONDITIONS: sim.model.opt.timestep <= timestep_data <= timestep, and all three ratios need to be Integer
-    --> given sim.model.opt.timestep (from MuJoCo model) and timestep (as argument), timestep_data is computed as value
+    --> NECESSARY CONDITIONS: model.opt.timestep <= timestep_data <= timestep, and all three ratios need to be Integer
+    --> given model.opt.timestep (from MuJoCo model) and timestep (as argument), timestep_data is computed as value
         that is closest to original data sampling interval length and satifies all necessary conditions
 
     WARNING: reasonable qpos and qvel fits (with optimize_excitations=False) were obtained with 
-    sim.model.opt.timestep=0.002, timestep_data=0.004, and timestep=0.04. 
+    model.opt.timestep=0.002, timestep_data=0.004, and timestep=0.04. 
     In particular, for different data sampling rate, i.e., different timestep_data,
     used meta-parameters such as the loss function weights and parameters of Savitzky-Golay filter 
     applied to ground-truth data might need to be tuned manually again...
@@ -109,15 +138,15 @@ def CFAT_algorithm(table_filename,
                                ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
 
     # SIMULATE USING MULTIPLE MUJOCO STEPS PER INPUT ROW:
-    assert (timestep / sim.model.opt.timestep).is_integer()
-    simulation_frame_skip = int(timestep / sim.model.opt.timestep)
+    assert (timestep / model.opt.timestep).is_integer()
+    simulation_frame_skip = int(timestep / model.opt.timestep)
     possible_factors = factors(simulation_frame_skip)
     if not allow_smaller_data_timesteps:  # only allow "timestep_data" greater or equal (original) "trajectories_table.index.to_series().diff().mean()"
         possible_factors = possible_factors[possible_factors >= int(
-            trajectories_table.index.to_series().diff().mean() // sim.model.opt.timestep)]
+            trajectories_table.index.to_series().diff().mean() // model.opt.timestep)]
     frame_skip_data = possible_factors[np.argmin(np.abs(
-        possible_factors * sim.model.opt.timestep - trajectories_table.index.to_series().diff().mean()))]
-    timestep_data = frame_skip_data * sim.model.opt.timestep
+        possible_factors * model.opt.timestep - trajectories_table.index.to_series().diff().mean()))]
+    timestep_data = frame_skip_data * model.opt.timestep
     timestep_data = np.round(timestep_data, 8)  # get rid of rounding errors...
     assert (timestep / timestep_data).is_integer()
     ### INTERPOLATE DATA FILE:
@@ -134,7 +163,7 @@ def CFAT_algorithm(table_filename,
     if int((trajectories_table.shape[0] - 1) % (timestep / timestep_data)):
         trajectories_table = trajectories_table.iloc[
                              :-int((trajectories_table.shape[0] - 1) % (timestep / timestep_data))]
-    print((sim.model.opt.timestep, frame_skip_data, timestep_data, simulation_frame_skip, timestep))
+    print((model.opt.timestep, frame_skip_data, timestep_data, simulation_frame_skip, timestep))
 
     trajectories_table = trajectories_table.rename(lambda i: i - trajectories_table.index[0], axis=0)
     trajectories_table.index.names = ["time"]
@@ -255,13 +284,13 @@ def CFAT_algorithm(table_filename,
     trajectories_table = trajectories_table.reset_index()
 
     # TODO: delete
-    # trajectories_table.loc[:, "thorax_xpos_x":"thorax_xpos_z"] -= sim.model.body_pos[sim.model.body_name2id("thorax")]
-    # sim.model.body_pos[sim.model.body_name2id("thorax")] = np.array([0, 0, 0])
+    # trajectories_table.loc[:, "thorax_xpos_x":"thorax_xpos_z"] -= model.body_pos[model.body_name2id("thorax") if use_mujoco_py else model.body("thorax").id]
+    # model.body_pos[model.body_name2id("thorax") if use_mujoco_py else model.body("thorax").id] = np.array([0, 0, 0])
 
     # SIMULATE USING ONE MUJOCO STEP PER INPUT ROW:
     # simulation_frame_skip = 1
     # print(f'INFO: Settings MuJoCo timestep to {trajectories_table.time.diff().mean()}s.')
-    # sim.model.opt.timestep = trajectories_table.time.diff().mean() / 1
+    # model.opt.timestep = trajectories_table.time.diff().mean() / 1
 
     # SIMULATE USING MULTIPLE MUJOCO STEPS PER INPUT ROW:
     #### See above... ####
@@ -301,50 +330,50 @@ def CFAT_algorithm(table_filename,
             trajectories_table = trajectories_table_test
 
     # Posture initialization:
-    qpos = np.zeros((sim.model.nq,))  # sim.data.qpos.copy()
-    qvel = np.zeros((sim.model.nq,))  # sim.data.qvel.copy()
-    qacc = np.zeros((sim.model.nq,))  # sim.data.qacc.copy()
+    qpos = np.zeros((model.nq,))  # data.qpos.copy()
+    qvel = np.zeros((model.nq,))  # data.qvel.copy()
+    qacc = np.zeros((model.nq,))  # data.qacc.copy()
     for column_name in [i.split('_pos')[0] for i in trajectories_table.columns if
                         i.endswith(
                             '_pos')]:  # & ~i.startswith('thorax') & ((not usemuscles) or ~i.startswith('thorax'))]:
-        qpos[sim.model.joint_name2id(column_name)] = trajectories_table.loc[:, column_name + '_pos'].iloc[
+        qpos[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = trajectories_table.loc[:, column_name + '_pos'].iloc[
             0]
     for column_name in [i.split('_vel')[0] for i in trajectories_table.columns if
                         i.endswith(
                             '_vel')]:  # & ~i.startswith('thorax') & ((not usemuscles) or ~i.startswith('thorax'))]:
-        qvel[sim.model.joint_name2id(column_name)] = trajectories_table.loc[:, column_name + '_vel'].iloc[
+        qvel[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = trajectories_table.loc[:, column_name + '_vel'].iloc[
             0]
     for column_name in [i.split('_acc')[0] for i in trajectories_table.columns if
                         i.endswith(
                             '_acc')]:  # & ~i.startswith('thorax') & ((not usemuscles) or ~i.startswith('thorax'))]:
-        qacc[sim.model.joint_name2id(column_name)] = trajectories_table.loc[:, column_name + '_acc'].iloc[
+        qacc[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = trajectories_table.loc[:, column_name + '_acc'].iloc[
             0]
 
     # Set initial thorax translation:
     remaining_thorax_translation = trajectories_table.loc[:, "thorax_xpos_x":"thorax_xpos_z"].iloc[0] - \
-                                   sim.model.body_pos[sim.model.body_name2id("thorax")]
-    qpos[sim.model.joint_name2id("thorax_tx")] = remaining_thorax_translation[0]
-    qpos[sim.model.joint_name2id("thorax_ty")] = remaining_thorax_translation[1]
-    qpos[sim.model.joint_name2id("thorax_tz")] = remaining_thorax_translation[2]
-    qvel[sim.model.joint_name2id("thorax_tx")] = 0
-    qvel[sim.model.joint_name2id("thorax_ty")] = 0
-    qvel[sim.model.joint_name2id("thorax_tz")] = 0
+                                   model.body_pos[model.body_name2id("thorax") if use_mujoco_py else model.body("thorax").id]
+    qpos[model.joint_name2id("thorax_tx") if use_mujoco_py else model.joint("thorax_tx").id] = remaining_thorax_translation[0]
+    qpos[model.joint_name2id("thorax_ty") if use_mujoco_py else model.joint("thorax_ty").id] = remaining_thorax_translation[1]
+    qpos[model.joint_name2id("thorax_tz") if use_mujoco_py else model.joint("thorax_tz").id] = remaining_thorax_translation[2]
+    qvel[model.joint_name2id("thorax_tx") if use_mujoco_py else model.joint("thorax_tx").id] = 0
+    qvel[model.joint_name2id("thorax_ty") if use_mujoco_py else model.joint("thorax_ty").id] = 0
+    qvel[model.joint_name2id("thorax_tz") if use_mujoco_py else model.joint("thorax_tz").id] = 0
 
     # adjust thorax constraints to keep initial thorax posture:
     for column_name in ["thorax_tx", "thorax_ty", "thorax_tz", "thorax_rx", "thorax_ry", "thorax_rz"]:
-        sim.model.eq_data[
-            (sim.model.eq_obj1id[:] == sim.model.joint_name2id(column_name)) & (
-                    sim.model.eq_type[:] == 2), 0] = qpos[
-            sim.model.joint_name2id(column_name)]
+        model.eq_data[
+            (model.eq_obj1id[:] == model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id) & (
+                    model.eq_type[:] == 2), 0] = qpos[
+            model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
     if ensure_constraints:
         # adjust virtual joints according to active constraints:
         for (virtual_joint_id, physical_joint_id, poly_coefs) in zip(
-                sim.model.eq_obj1id[
-                    (sim.model.eq_type == 2) & (sim.model.eq_active == 1)],
-                sim.model.eq_obj2id[
-                    (sim.model.eq_type == 2) & (sim.model.eq_active == 1)],
-                sim.model.eq_data[(sim.model.eq_type == 2) &
-                                  (sim.model.eq_active == 1), 4::-1]):
+                model.eq_obj1id[
+                    (model.eq_type == 2) & (model.eq_active == 1)],
+                model.eq_obj2id[
+                    (model.eq_type == 2) & (model.eq_active == 1)],
+                model.eq_data[(model.eq_type == 2) &
+                                  (model.eq_active == 1), 4::-1]):
             qpos[virtual_joint_id] = np.polyval(poly_coefs, qpos[physical_joint_id])
 
     param_init_qpos = qpos
@@ -357,22 +386,27 @@ def CFAT_algorithm(table_filename,
         x0.qvel[:] = param_init_qvel
         sim.set_state(x0)
     else:
-        raise NotImplementedError
+        mujoco.mj_resetData(model, data)
+        data.qpos[:] = np.copy(param_init_qpos)
+        data.qvel[:] = np.copy(param_init_qvel)
+        if model.na == 0:
+            data.act[:] = None
+        mujoco.mj_forward(model, data)
 
     if useexcitationcontrol and optimize_excitations:
-        activations = np.zeros(sim.model.nu, )
-        activations_first_derivative = np.zeros(sim.model.nu, )
+        activations = np.zeros(model.nu, )
+        activations_first_derivative = np.zeros(model.nu, )
 
     output_table = trajectories_table.copy()  # .set_index('time')
     output_table = output_table.rename(lambda x: x + '_orig' if x[-4:] in ['_pos', '_vel', '_acc'] else x, axis=1)
 
     for column_name in physical_joints + virtual_joints:
-        output_table.loc[output_table.index[0], column_name + '_pos'] = sim.data.qpos[
-            sim.model.joint_name2id(column_name)]
-        output_table.loc[output_table.index[0], column_name + '_vel'] = sim.data.qvel[
-            sim.model.joint_name2id(column_name)]
-        output_table.loc[output_table.index[0], column_name + '_acc'] = sim.data.qacc[
-            sim.model.joint_name2id(column_name)]
+        output_table.loc[output_table.index[0], column_name + '_pos'] = data.qpos[
+            model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
+        output_table.loc[output_table.index[0], column_name + '_vel'] = data.qvel[
+            model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
+        output_table.loc[output_table.index[0], column_name + '_acc'] = data.qacc[
+            model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
 
     last_index = trajectories_table.iloc[:-1:int(timestep / timestep_data), :].index[-1]
 
@@ -391,13 +425,13 @@ def CFAT_algorithm(table_filename,
                 return True
 
         if _visualize_cond_fn(index, num_target_switches):
-            last_qpos_data = sim.data.qpos.copy()
-            last_qvel_data = sim.data.qvel.copy()
-            next_qpos_data = np.zeros(shape=(int(timestep / timestep_data), sim.model.nq))
-            next_qvel_data = np.zeros(shape=(int(timestep / timestep_data), sim.model.nq))
-            next_qacc_data = np.zeros(shape=(int(timestep / timestep_data), sim.model.nq))
-            forward_qpos = sim.data.qpos.copy()
-            forward_qvel = sim.data.qvel.copy()
+            last_qpos_data = data.qpos.copy()
+            last_qvel_data = data.qvel.copy()
+            next_qpos_data = np.zeros(shape=(int(timestep / timestep_data), model.nq))
+            next_qvel_data = np.zeros(shape=(int(timestep / timestep_data), model.nq))
+            next_qacc_data = np.zeros(shape=(int(timestep / timestep_data), model.nq))
+            forward_qpos = data.qpos.copy()
+            forward_qvel = data.qvel.copy()
             if useexcitationcontrol and optimize_excitations:
                 forward_activations = activations.copy()
                 forward_activations_first_derivative = activations_first_derivative.copy()
@@ -405,41 +439,41 @@ def CFAT_algorithm(table_filename,
             # input((row[[column_name + '_pos' for column_name in physical_joints]], nextrow[[column_name + '_pos' for column_name in physical_joints]]))
             for column_name in [i.split('_pos')[0] for i in trajectories_table.columns if
                                 i.endswith('_pos')]:  # & ~i.startswith('thorax')]:
-                last_qpos_data[sim.model.joint_name2id(column_name)] = row[column_name + '_pos']
+                last_qpos_data[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = row[column_name + '_pos']
             for column_name in [i.split('_vel')[0] for i in trajectories_table.columns if
                                 i.endswith('_vel')]:  # & ~i.startswith('thorax')]:
-                last_qvel_data[sim.model.joint_name2id(column_name)] = row[column_name + '_vel']
+                last_qvel_data[model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = row[column_name + '_vel']
             for next_indices in range(nextrow.shape[0]):  # range(int(timestep / timestep_data)):
                 for column_name in [i.split('_pos')[0] for i in trajectories_table.columns if
                                     i.endswith('_pos')]:  # & ~i.startswith('thorax')]:
-                    next_qpos_data[next_indices][sim.model.joint_name2id(column_name)] = \
+                    next_qpos_data[next_indices][model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
                         nextrow[column_name + '_pos'].iloc[next_indices]
                 for column_name in [i.split('_vel')[0] for i in trajectories_table.columns if
                                     i.endswith('_vel')]:  # & ~i.startswith('thorax')]:
-                    next_qvel_data[next_indices][sim.model.joint_name2id(column_name)] = \
+                    next_qvel_data[next_indices][model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
                         nextrow[column_name + '_vel'].iloc[next_indices]
                 for column_name in [i.split('_acc')[0] for i in trajectories_table.columns if
                                     i.endswith('_acc')]:  # & ~i.startswith('thorax')]:
-                    next_qacc_data[next_indices][sim.model.joint_name2id(column_name)] = \
+                    next_qacc_data[next_indices][model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id] = \
                         nextrow[column_name + '_acc'].iloc[next_indices]
             if ensure_constraints:
                 # adjust thorax constraints to keep initial thorax posture:
                 for column_name in ["thorax_tx", "thorax_ty", "thorax_tz", "thorax_rx", "thorax_ry",
                                     "thorax_rz"]:
-                    sim.model.eq_data[
-                        (sim.model.eq_obj1id[:] == sim.model.joint_name2id(
-                            column_name)) & (
-                                sim.model.eq_type[:] == 2), 0] = qpos[
-                        sim.model.joint_name2id(column_name)]
+                    model.eq_data[
+                        (model.eq_obj1id[:] == (model.joint_name2id(
+                            column_name) if use_mujoco_py else model.joint(column_name).id)) & (
+                                model.eq_type[:] == 2), 0] = qpos[
+                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
 
                 # adjust virtual joints according to active constraints:
                 for (virtual_joint_id, physical_joint_id, poly_coefs) in zip(
-                        sim.model.eq_obj1id[
-                            (sim.model.eq_type == 2) & (sim.model.eq_active == 1)],
-                        sim.model.eq_obj2id[
-                            (sim.model.eq_type == 2) & (sim.model.eq_active == 1)],
-                        sim.model.eq_data[
-                        (sim.model.eq_type == 2) & (sim.model.eq_active == 1), 4::-1]):
+                        model.eq_obj1id[
+                            (model.eq_type == 2) & (model.eq_active == 1)],
+                        model.eq_obj2id[
+                            (model.eq_type == 2) & (model.eq_active == 1)],
+                        model.eq_data[
+                        (model.eq_type == 2) & (model.eq_active == 1), 4::-1]):
                     # print((virtual_joint_id, np.abs(np.polyval(poly_coefs, qpos[physical_joint_id]) - forward_qpos[virtual_joint_id])))
                     if reset_pos_and_vel:
                         last_qpos_data[virtual_joint_id] = np.polyval(poly_coefs, last_qpos_data[physical_joint_id])
@@ -460,9 +494,14 @@ def CFAT_algorithm(table_filename,
                     x0.qvel[:] = param_init_qvel
                     sim.set_state(x0)
                 else:
-                    raise NotImplementedError
+                    mujoco.mj_resetData(model, data)
+                    data.qpos[:] = np.copy(param_init_qpos)
+                    data.qvel[:] = np.copy(param_init_qvel)
+                    if model.na == 0:
+                        data.act[:] = None
+                    mujoco.mj_forward(model, data)
             # Write action sequence consisting of zeros into output_table...
-            action = np.zeros(sim.model.nu, )
+            action = np.zeros(model.nu, )
 
             def minimize_posvelacc_error(ctrl, pos, vel, acc):
                 pos_error = 0
@@ -471,38 +510,42 @@ def CFAT_algorithm(table_filename,
 
                 for frame_skip_index in range(simulation_frame_skip):
                     if not use_qacc:
-                        forward_qvel_testing = sim.data.qvel.copy()
+                        forward_qvel_testing = data.qvel.copy()
 
-                    sim.data.ctrl[:] = ctrl
+                    data.ctrl[:] = ctrl
                     try:
-                        sim.step()
+                        if use_mujoco_py:
+                            sim.step()
+                        else:
+                            mujoco.mj_step(model, data)
+                            mujoco.mj_rnePostConstraint(model, data)
                     except mujoco_py.builder.MujocoException:
                         print(
-                            f"ERROR: The simulation is unstable.\n\tqpos={sim.data.qpos[:]}\n\tqvel={sim.data.qvel[:]}\n\tctrl={ctrl}")
+                            f"ERROR: The simulation is unstable.\n\tqpos={data.qpos[:]}\n\tqvel={data.qvel[:]}\n\tctrl={ctrl}")
                         pos_error = np.inf
                         vel_error = np.inf
                         acc_error = np.inf
                         break
                     if (frame_skip_index + 1) % frame_skip_data == 0:
                         pos_error += np.linalg.norm(
-                            sim.data.qpos[physical_joint_ids] -
+                            data.qpos[physical_joint_ids] -
                             pos[frame_skip_index // frame_skip_data][
                                 physical_joint_ids])
                         vel_error += np.linalg.norm(
-                            sim.data.qvel[physical_joint_ids] -
+                            data.qvel[physical_joint_ids] -
                             vel[frame_skip_index // frame_skip_data][
                                 physical_joint_ids])
                         if use_qacc:
                             # TODO: do we need reserve actuators as in OpenSim (if only 6 out of 7 controls are directly penalized with acc costs, the remaining control seems to take this function...)
                             acc_error += np.linalg.norm(
-                                sim.data.qacc[physical_joint_ids] -
+                                data.qacc[physical_joint_ids] -
                                 acc[frame_skip_index // frame_skip_data][
                                     physical_joint_ids])
                         else:
                             acc_error += np.linalg.norm(
-                                ((sim.data.qvel[physical_joint_ids] -
+                                ((data.qvel[physical_joint_ids] -
                                   forward_qvel_testing[
-                                      physical_joint_ids]) / sim.model.opt.timestep) -
+                                      physical_joint_ids]) / model.opt.timestep) -
                                 acc[frame_skip_index // frame_skip_data][
                                     physical_joint_ids])
 
@@ -519,7 +562,12 @@ def CFAT_algorithm(table_filename,
                     sim.set_state(x0)
                     sim.forward()
                 else:
-                    raise NotImplementedError
+                    mujoco.mj_resetData(model, data)
+                    data.qpos[:] = np.copy(param_init_qpos)
+                    data.qvel[:] = np.copy(param_init_qvel)
+                    if model.na == 0:
+                        data.act[:] = None
+                    mujoco.mj_forward(model, data)
 
                 if usemuscles:
                     return vel_error
@@ -545,22 +593,26 @@ def CFAT_algorithm(table_filename,
                                                                                                     param_t_activation,
                                                                                                     param_t_excitation)
 
-                    sim.data.ctrl[:] = activations
+                    data.ctrl[:] = activations
                     input((simulation_frame_skip,
                            simulation_frame_skip))  # delete this if both match (otherwise, there might be a problem with sim.step()...)
-                    sim.step()
+                    if use_mujoco_py:
+                        sim.step()
+                    else:
+                        mujoco.mj_step(model, data)
+                        mujoco.mj_rnePostConstraint(model, data)
 
                     if (frame_skip_index + 1) % frame_skip_data == 0:
                         pos_error += np.linalg.norm(
-                            sim.data.qpos[physical_joint_ids] -
+                            data.qpos[physical_joint_ids] -
                             pos[frame_skip_index // frame_skip_data][
                                 physical_joint_ids])
                         vel_error += np.linalg.norm(
-                            sim.data.qvel[physical_joint_ids] -
+                            data.qvel[physical_joint_ids] -
                             vel[frame_skip_index // frame_skip_data][
                                 physical_joint_ids])
                         acc_error += np.linalg.norm(
-                            sim.data.qacc[physical_joint_ids] -
+                            data.qacc[physical_joint_ids] -
                             acc[frame_skip_index // frame_skip_data][
                                 physical_joint_ids])
 
@@ -576,7 +628,12 @@ def CFAT_algorithm(table_filename,
                     x0.qvel[:] = param_init_qvel
                     sim.set_state(x0)
                 else:
-                    raise NotImplementedError
+                    mujoco.mj_resetData(model, data)
+                    data.qpos[:] = np.copy(param_init_qpos)
+                    data.qvel[:] = np.copy(param_init_qvel)
+                    if model.na == 0:
+                        data.act[:] = None
+                    mujoco.mj_forward(model, data)
 
                 activations = forward_activations
                 activations_first_derivative = forward_activations_first_derivative
@@ -587,22 +644,22 @@ def CFAT_algorithm(table_filename,
                 if usecontrollimits:
                     feasible_controls_sol = minimize(minimize_posvelacc_error_secondorder_control, action,
                                                      args=(next_qpos_data, next_qvel_data, next_qacc_data),
-                                                     bounds=sim.model.actuator_ctrlrange, method="SLSQP")
+                                                     bounds=model.actuator_ctrlrange, method="SLSQP")
                 else:
                     feasible_controls_sol = minimize(minimize_posvelacc_error_secondorder_control, action,
                                                      args=(next_qpos_data, next_qvel_data, next_qacc_data),
                                                      method="SLSQP")
             elif usemuscles:
-                # feasible_controls_sol = minimize(minimize_posvelacc_error, action, args=(next_qpos_data, next_qvel_data, next_qacc_data), bounds=sim.model.actuator_ctrlrange, method="SLSQP")
+                # feasible_controls_sol = minimize(minimize_posvelacc_error, action, args=(next_qpos_data, next_qvel_data, next_qacc_data), bounds=model.actuator_ctrlrange, method="SLSQP")
                 feasible_controls_sol = minimize(minimize_posvelacc_error, action,
                                                  args=(next_qpos_data, next_qvel_data, next_qacc_data),
-                                                 bounds=[(1e-8, 100) for _ in range(sim.model.nu)],
+                                                 bounds=[(1e-8, 100) for _ in range(model.nu)],
                                                  method="SLSQP")
             else:
                 if usecontrollimits:
                     feasible_controls_sol = minimize(minimize_posvelacc_error, action,
                                                      args=(next_qpos_data, next_qvel_data, next_qacc_data),
-                                                     bounds=sim.model.actuator_ctrlrange, method="SLSQP")
+                                                     bounds=model.actuator_ctrlrange, method="SLSQP")
                 else:
                     feasible_controls_sol = minimize(minimize_posvelacc_error, action,
                                                      args=(next_qpos_data, next_qvel_data, next_qacc_data),
@@ -612,101 +669,110 @@ def CFAT_algorithm(table_filename,
 
             next_index = [i for i in output_table.index if i > output_table.index[index]][0]
             if usemuscles:
-                for actuator_name in [sim.model.actuator_id2name(actuator_id) for actuator_id in
-                                      range(sim.model.nu)]:
+                for actuator_name in [model.actuator_id2name(actuator_id) for actuator_id in
+                                      range(model.nu)]:
                     output_table.loc[index, 'A_' + actuator_name] = ctrl[
-                        sim.model.actuator_name2id(actuator_name)]
+                        model.actuator_name2id(actuator_name) if use_mujoco_py else model.actuator(actuator_name).id]
             else:
                 for column_name in physical_joints:
                     output_table.loc[index, 'A_' + column_name] = ctrl[
-                        sim.model.actuator_name2id('A_' + column_name)]
+                        model.actuator_name2id('A_' + column_name) if use_mujoco_py else model.actuator('A_' + column_name).id]
 
             if useexcitationcontrol and optimize_excitations:
                 for frame_skip_index in range(simulation_frame_skip):
                     if not use_qacc:
-                        forward_qvel_testing = sim.data.qvel.copy()
+                        forward_qvel_testing = data.qvel.copy()
                     activations, activations_first_derivative = muscle_activation_model_secondorder(
                         activations, activations_first_derivative, ctrl,
-                        sim.model.opt.timestep)
+                        model.opt.timestep)
 
-                    sim.data.ctrl[:] = activations
-                    sim.step()
+                    data.ctrl[:] = activations
+                    if use_mujoco_py:
+                        sim.step()
+                    else:
+                        mujoco.mj_step(model, data)
+                        mujoco.mj_rnePostConstraint(model, data)
                     if (frame_skip_index + 1) % frame_skip_data == 0:
                         for column_name in physical_joints + virtual_joints:
                             output_table.loc[
                                 next_index + frame_skip_index // frame_skip_data, column_name + '_pos'] = \
-                                sim.data.qpos[
-                                    sim.model.joint_name2id(column_name)]
+                                data.qpos[
+                                    model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
                             output_table.loc[
                                 next_index + frame_skip_index // frame_skip_data, column_name + '_vel'] = \
-                                sim.data.qvel[
-                                    sim.model.joint_name2id(column_name)]
+                                data.qvel[
+                                    model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
                             if use_qacc:
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = \
-                                    sim.data.qacc[
-                                        sim.model.joint_name2id(column_name)]
+                                    data.qacc[
+                                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
                             else:
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = (
-                                                                                                                      sim.data.qvel[
-                                                                                                                          sim.model.joint_name2id(
-                                                                                                                              column_name)] -
-                                                                                                                      forward_qvel_testing[
-                                                                                                                          sim.model.joint_name2id(
-                                                                                                                              column_name)]) / sim.model.opt.timestep
+                                                                                                                      data.qvel[
+                                                                                                                          (model.joint_name2id(
+                                                                                                                                  column_name) if use_mujoco_py else model.joint(
+                                                                                                                                  column_name).id)] -
+                                                                                                                      forward_qvel_testing[(model.joint_name2id(
+                            column_name) if use_mujoco_py else model.joint(column_name).id)]) / model.opt.timestep
 
             else:
                 for frame_skip_index in range(simulation_frame_skip):
                     if not use_qacc:
-                        forward_qvel_testing = sim.data.qvel.copy()
-                    sim.data.ctrl[:] = ctrl
-                    sim.step()
+                        forward_qvel_testing = data.qvel.copy()
+                    data.ctrl[:] = ctrl
+                    if use_mujoco_py:
+                        sim.step()
+                    else:
+                        mujoco.mj_step(model, data)
+                        mujoco.mj_rnePostConstraint(model, data)
                     if (frame_skip_index + 1) % frame_skip_data == 0:
                         for column_name in physical_joints + virtual_joints:
                             output_table.loc[
                                 next_index + frame_skip_index // frame_skip_data, column_name + '_pos'] = \
-                                sim.data.qpos[
-                                    sim.model.joint_name2id(column_name)]
+                                data.qpos[
+                                    model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
                             output_table.loc[
                                 next_index + frame_skip_index // frame_skip_data, column_name + '_vel'] = \
-                                sim.data.qvel[
-                                    sim.model.joint_name2id(column_name)]
+                                data.qvel[
+                                    model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
                             if use_qacc:
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = \
-                                    sim.data.qacc[
-                                        sim.model.joint_name2id(column_name)]
+                                    data.qacc[
+                                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
                             else:
                                 output_table.loc[
                                     next_index + frame_skip_index // frame_skip_data, column_name + '_acc'] = (
-                                                                                                                      sim.data.qvel[
-                                                                                                                          sim.model.joint_name2id(
-                                                                                                                              column_name)] -
-                                                                                                                      forward_qvel_testing[
-                                                                                                                          sim.model.joint_name2id(
-                                                                                                                              column_name)]) / sim.model.opt.timestep
+                                                                                                                      data.qvel[(model.joint_name2id(
+                            column_name) if use_mujoco_py else model.joint(column_name).id)] -
+                                                                                                                      forward_qvel_testing[(model.joint_name2id(
+                            column_name) if use_mujoco_py else model.joint(column_name).id)]) / model.opt.timestep
 
             if store_mj_inverse:
-                mujoco_py.cymj._mj_inverse(sim.model, sim.data)
+                if use_mujoco_py:
+                    mujoco_py.cymj._mj_inverse(model, data)
+                else:
+                    mujoco.mj_inverse(model, data)
                 for column_name in physical_joints + virtual_joints:
-                    output_table.loc[index, 'ID_' + column_name] = sim.data.qfrc_inverse[
-                        sim.model.joint_name2id(column_name)]
+                    output_table.loc[index, 'ID_' + column_name] = data.qfrc_inverse[
+                        model.joint_name2id(column_name) if use_mujoco_py else model.joint(column_name).id]
 
-            opt_error_pos = np.linalg.norm(sim.data.qpos[physical_joint_ids] -
+            opt_error_pos = np.linalg.norm(data.qpos[physical_joint_ids] -
                                            next_qpos_data[int(timestep / timestep_data) - 1][
                                                physical_joint_ids])
-            opt_error_vel = np.linalg.norm(sim.data.qvel[physical_joint_ids] -
+            opt_error_vel = np.linalg.norm(data.qvel[physical_joint_ids] -
                                            next_qvel_data[int(timestep / timestep_data) - 1][
                                                physical_joint_ids])
             if use_qacc:
-                opt_error_acc = np.linalg.norm(sim.data.qacc[physical_joint_ids] -
+                opt_error_acc = np.linalg.norm(data.qacc[physical_joint_ids] -
                                                next_qacc_data[int(timestep / timestep_data) - 1][
                                                    physical_joint_ids])
             else:
-                opt_error_acc = np.linalg.norm(((sim.data.qvel[physical_joint_ids] -
+                opt_error_acc = np.linalg.norm(((data.qvel[physical_joint_ids] -
                                                  forward_qvel_testing[
-                                                     physical_joint_ids]) / sim.model.opt.timestep)
+                                                     physical_joint_ids]) / model.opt.timestep)
                                                - next_qacc_data[int(timestep / timestep_data) - 1][
                                                    physical_joint_ids])
             output_table.loc[index, "opt_success"] = feasible_controls_sol.success
@@ -815,11 +881,14 @@ def compute_gears_and_ctrlranges(DIRNAME_CFAT,
             continue
         CFAT_table = pd.concat((CFAT_table, df))
 
+    assert len(CFAT_table) > 0, "No valid CFAT files identified."
+
     # Remove samples that did not converge
     if CFAT_table.loc[CFAT_table.opt_success == False].shape[0] > 0:
         print(
             f'INFO: {CFAT_table.loc[CFAT_table.opt_success == False].shape[0]} sample{"s" * (CFAT_table.loc[CFAT_table.opt_success == False].shape[0] != 1)} did not converge!')
     CFAT_table = CFAT_table.loc[CFAT_table.opt_success != False]
+
     control_columns_prefix = "A_"  # "ctrl_"
     computed_feasible_controls = CFAT_table.loc[:, [column_name for column_name in CFAT_table.columns if
                                                     column_name.startswith(control_columns_prefix)]]

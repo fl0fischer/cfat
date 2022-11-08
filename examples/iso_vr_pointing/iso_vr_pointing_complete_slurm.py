@@ -42,6 +42,8 @@ error_directory = f"{os.getcwd()}/_slurm/err"
 if not os.path.exists(error_directory):
     os.makedirs(error_directory, exist_ok=True)
 
+use_mujoco_py = True  #whether to use mujoco-py or mujoco
+
 for trial_id, (username, table_filename) in enumerate(filelist):
     print(f'\nCOMPUTING FEASIBLE CONTROLS for {table_filename}.')
 
@@ -54,6 +56,6 @@ for trial_id, (username, table_filename) in enumerate(filelist):
         fh.writelines(f"#SBATCH -t 24:00:00 # (Requested wall time)\n")
         fh.writelines(f"#SBATCH --output={output_directory}/{trial_id}.out\n")
         fh.writelines(f"#SBATCH --error={error_directory}/{trial_id}.err\n")
-        fh.writelines(f"srun python iso_vr_pointing_example.py --username={username} --table_filename={table_filename}")
+        fh.writelines(f"srun python iso_vr_pointing_example.py --username={username} --table_filename={table_filename} --use_mujoco={not use_mujoco_py}")
 
     os.system(f"sbatch {job_file}")

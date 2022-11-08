@@ -32,6 +32,7 @@ if __name__ == "__main__":
     parser.add_argument('--username', dest='username', default='U1', help='Username (U1-U6); used for model file (and table_filename, if not specified).')
     parser.add_argument('--task_condition', dest='task_condition', default='T_Pose', help='Task condition; used for table_filename.')
     parser.add_argument('--table_filename', dest='table_filename', help='Filename to run CFAT with.')
+    parser.add_argument('--use_mujoco', dest='use_mujoco_py', action='store_false', help='Whether to use MuJoCo Python bindings instead of mujoco-py.')
     args = parser.parse_args()
 
     DIRNAME_STUDY_IK = args.DIRNAME_STUDY_IK
@@ -55,7 +56,7 @@ if __name__ == "__main__":
     results_dir = f"_results/{username}_{timestep}s/"
 
     if not os.path.exists(results_dir):
-        os.makedirs(results_dir)
+        os.makedirs(results_dir, exist_ok=True)
 
     CFAT_algorithm(table_filename,
                    model_filename,
@@ -69,4 +70,5 @@ if __name__ == "__main__":
                    optimize_excitations=False,
                    use_qacc=True,
                    timestep=timestep,
-                   results_dir=results_dir)
+                   results_dir=results_dir,
+                   use_mujoco_py=args.use_mujoco_py)
