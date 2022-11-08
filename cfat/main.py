@@ -2,7 +2,9 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 from scipy.signal import savgol_filter
-import os
+from scipy import stats
+import os, glob
+import logging
 from functools import reduce
 import mujoco_py
 
@@ -31,7 +33,7 @@ def CFAT_algorithm(table_filename,
                    ensure_constraints=False,
                    reset_pos_and_vel=True,
                    usemuscles=False,
-                   useexcitationcontrol=False,
+                   useexcitationcontrol=True,
                    optimize_excitations=False,
                    usecontrollimits=False,
                    only_initial_values=False,
@@ -782,3 +784,80 @@ def CFAT_algorithm(table_filename,
         store_trajectories_table(output_table_filename, output_table, unique_filename=False)
 
     return output_table
+
+
+def compute_gears_and_ctrlranges(DIRNAME_CFAT,
+              use_MAD_outliers=False,
+              use_3xSTD_outliers=True,
+              MAD_criterion_coefficient=20,
+              lower_quantile=0.0005  # only used if both use_MAD_outliers and use_3xSTD_outliers are False
+              ):
+    """
+    Compute gears and control ranges from CFAT data.
+    :param DIRNAME_CFAT: directory with CFAT files (all *_CFAT.csv files in this directory are used)
+    :param use_MAD_outliers: whether to use the "median absolute deviation" outlier criterion
+    :param use_3xSTD_outliers: whether to use the "3x standard deviation" outlier criterion
+    :param MAD_criterion_coefficient: "median absolute deviation" scaling coefficient
+    :param lower_quantile: lower quantile used if both use_MAD_outliers and use_3xSTD_outliers are False
+    (as float; lower_quantile=0 corresponds to min/max)
+    :return: Dictionary containing a tuple of shape (gear, lower control range bound, upper control range bound)
+    for each joint. The value for a "*_fwd_cp" entry should match the value for the respective joint
+    (double check of forward-backward compatibility of CFAT_algorithm(optimize_excitations=False)).
+    """
+    upper_quantile = 1 - lower_quantile
+
+    CFAT_table = pd.DataFrame()
+    CFAT_files = os.path.expanduser(os.path.join(DIRNAME_CFAT, f'*_CFC.csv'))
+    for file in glob.iglob(CFAT_files, recursive=True):
+        df = pd.read_csv(file, index_col="time")
+        if "opt_success" not in df:
+            logging.warning(f"Skip file {file}, as it does not have the right structure.")
+            continue
+        CFAT_table = pd.concat((CFAT_table, df))
+
+    # Remove samples that did not converge
+    if CFAT_table.loc[CFAT_table.opt_success == False].shape[0] > 0:
+        print(
+            f'INFO: {CFAT_table.loc[CFAT_table.opt_success == False].shape[0]} sample{"s" * (CFAT_table.loc[CFAT_table.opt_success == False].shape[0] != 1)} did not converge!')
+    CFAT_table = CFAT_table.loc[CFAT_table.opt_success != False]
+    control_columns_prefix = "A_"  # "ctrl_"
+    computed_feasible_controls = CFAT_table.loc[:, [column_name for column_name in CFAT_table.columns if
+                                                    column_name.startswith(control_columns_prefix)]]
+
+    participant_torque_dict = {}
+
+    if use_MAD_outliers:
+        logging.info(f"Gears and control limits using outlier criterion based on {MAD_criterion_coefficient} times MAD:")
+        for column_name in computed_feasible_controls.columns:
+            computed_feasible_controls__current_joint_without_outliers = \
+                computed_feasible_controls[column_name].loc[np.abs(
+                    computed_feasible_controls[column_name] - computed_feasible_controls[
+                        column_name].median()) <= MAD_criterion_coefficient * np.abs(
+                    computed_feasible_controls[column_name] - computed_feasible_controls[
+                        column_name].median()).median()]
+            torque_range = [computed_feasible_controls__current_joint_without_outliers.min(),
+                            computed_feasible_controls__current_joint_without_outliers.max()]
+            new_gear = np.max(np.abs(torque_range))
+            participant_torque_dict[column_name[len(control_columns_prefix):]] = (
+                new_gear, torque_range[0] / new_gear, torque_range[1] / new_gear)
+    elif use_3xSTD_outliers:
+        logging.info(f"Gears and control limits using outlier criterion based on 3 times STD:")
+        for column_name in computed_feasible_controls.columns:
+            computed_feasible_controls__current_joint_without_outliers = \
+                computed_feasible_controls[column_name].loc[
+                    (np.abs(stats.zscore(computed_feasible_controls[column_name], nan_policy="omit")) <= 3)]
+            torque_range = [computed_feasible_controls__current_joint_without_outliers.min(),
+                            computed_feasible_controls__current_joint_without_outliers.max()]
+            new_gear = np.max(np.abs(torque_range))
+            participant_torque_dict[column_name[len(control_columns_prefix):]] = (
+                new_gear, torque_range[0] / new_gear, torque_range[1] / new_gear)
+    else:
+        logging.info(f"Gears and control limits using {lower_quantile * 100}% and {upper_quantile * 100}% quantiles:")
+        for column_name in computed_feasible_controls.columns:
+            torque_range = [computed_feasible_controls[column_name].quantile(q=lower_quantile),
+                            computed_feasible_controls[column_name].quantile(q=upper_quantile)]
+            new_gear = np.max(np.abs(torque_range))
+            participant_torque_dict[column_name[len(control_columns_prefix):]] = (
+                new_gear, torque_range[0] / new_gear, torque_range[1] / new_gear)
+
+    return participant_torque_dict
