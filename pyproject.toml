@@ -10,8 +10,12 @@ dependencies = [
     "numpy",
     "pandas",
     "scipy",
-    "mujoco-py",
+    "mujoco-py<2.2,>=2.1",
 ]
+
+[project.optional-dependencies]
+mujoco_py = ["mujoco-py<2.2,>=2.1"]
+mujoco = ["mujoco>=2.2"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
