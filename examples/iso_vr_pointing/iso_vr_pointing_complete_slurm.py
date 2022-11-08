@@ -34,13 +34,13 @@ filelist = [(username, os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) for u
 
 job_directory = f"{os.getcwd()}/_slurm/jobs"
 if not os.path.exists(job_directory):
-    os.mkdir(job_directory)
+    os.makedirs(job_directory, exist_ok=True)
 output_directory = f"{os.getcwd()}/_slurm/out"
 if not os.path.exists(output_directory):
-    os.mkdir(output_directory)
+    os.makedirs(output_directory, exist_ok=True)
 error_directory = f"{os.getcwd()}/_slurm/err"
 if not os.path.exists(error_directory):
-    os.mkdir(error_directory)
+    os.makedirs(error_directory, exist_ok=True)
 
 for trial_id, (username, table_filename) in enumerate(filelist):
     print(f'\nCOMPUTING FEASIBLE CONTROLS for {table_filename}.')
