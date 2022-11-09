@@ -26,7 +26,7 @@ if __name__ == "__main__":
     DIRNAME_STUDY_IK = "study_IK_raw/"
     check_study_dataset_IK_dir(DIRNAME_STUDY_IK)
 
-    print('\n\n                              +++ FEASIBLE CONTROL COMPUTATION +++')
+    print('\n\n                 +++ Computation of Feasible Applied Torques (CFAT) +++')
     filelist = [(username, os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) for username in [f"U{i}" for i in range(1, 7)]
                 for f in os.listdir(DIRNAME_STUDY_IK) if
                 os.path.isfile(os.path.abspath(os.path.join(DIRNAME_STUDY_IK, f))) and
