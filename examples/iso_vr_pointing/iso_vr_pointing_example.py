@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+import logging
 from zipfile import ZipFile
 from io import BytesIO
 from urllib.request import urlopen
@@ -12,7 +14,7 @@ def check_study_dataset_IK_dir(DIRNAME_STUDY_IK):
         download_datasets = input(
             "Could not find reference to the raw IK data included in the ISO-VR-Pointing Dataset. Do you want to download it (~130MB after unpacking)? (y/N) ")
         if download_datasets.lower().startswith("y"):
-            print(f"Will download and unzip to '{DIRNAME_STUDY_IK}'.")
+            print(f"Will download and unzip to '{os.path.abspath(DIRNAME_STUDY_IK)}'.")
             print("Downloading archive... ", end='', flush=True)
             resp = urlopen("https://zenodo.org/record/7300062/files/ISO_VR_Pointing_IK_Raw.zip?download=1")
             zipfile = ZipFile(BytesIO(resp.read()))
@@ -22,7 +24,7 @@ def check_study_dataset_IK_dir(DIRNAME_STUDY_IK):
             print("done.")
             assert os.path.exists(DIRNAME_STUDY_IK), "Internal Error during unpacking of ISO-VR-Pointing Dataset."
         else:
-            raise FileNotFoundError("Please ensure that 'DIRNAME_STUDY' points to a valid directory containing the ISO-VR-Pointing Dataset.")
+            raise FileNotFoundError("Please ensure that 'DIRNAME_STUDY_IK' points to a valid directory containing the raw IK data included in the ISO-VR-Pointing Dataset.")
 
 
 if __name__ == "__main__":
@@ -36,6 +38,10 @@ if __name__ == "__main__":
     mujocopy_parser.add_argument('--mujoco', dest='use_mujoco_py', action='store_false')
     parser.set_defaults(use_mujoco_py=True)
     args = parser.parse_args()
+
+    # Change current working directory to file directory
+    os.chdir(Path(__file__).parent)
+    logging.info(Path(__file__).parent)
 
     DIRNAME_STUDY_IK = args.DIRNAME_STUDY_IK
     check_study_dataset_IK_dir(DIRNAME_STUDY_IK)
