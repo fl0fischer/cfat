@@ -1,7 +1,7 @@
 # Computation of Feasible Applied Torques (CFAT)
 
 This python package allows to compute feasible applied torques (i.e., sequences of rotational forces directly acting on the joints) from given Inverse Kinematics data (e.g., obtained from a MoCap user study) for a specific torque-driven MuJoCo model. In addition, these computed torque sequences can be used to identify appropriate gears and control ranges for this MuJoCo model.
-For details, see the paper "Simulating Interaction Movements via Model Predictive Control".
+For details, see the paper ["Simulating Interaction Movements via Model Predictive Control"](https://dl.acm.org/doi/10.1145/3577016).
 
 ### Example scripts:
 - **iso_vr_pointing** (ISO-VR-Pointing Dataset from "Simulating Interaction Movements via Model Predictive Control")
